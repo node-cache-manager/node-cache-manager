@@ -6,6 +6,7 @@ export type Config = {
   refreshThreshold?: Milliseconds;
   isCacheable?: (val: unknown) => boolean;
   onBackgroundRefreshError?: (error: unknown) => void;
+  onCacheError?: (error: unknown) => void;
 };
 
 export type Milliseconds = number;
@@ -105,11 +106,25 @@ export function createCache<S extends Store, C extends Config>(
     wrap: async <T>(key: string, fn: () => Promise<T>, ttl?: WrapTTL<T>, refreshThreshold?: Milliseconds) => {
       const refreshThresholdConfig = refreshThreshold || args?.refreshThreshold || 0;
       return coalesceAsync(key, async () => {
-        const value = await store.get<T>(key);
+        const value = await store.get<T>(key).catch((error) => {
+          if (args?.onCacheError) {
+            args.onCacheError(error);
+          } else {
+            return Promise.reject(error);
+          }
+        });
         if (value === undefined) {
           const result = await fn();
+
           const cacheTTL = typeof ttl === 'function' ? ttl(result) : ttl;
-          await store.set<T>(key, result, cacheTTL);
+          await store.set<T>(key, result, cacheTTL).catch((error) => {
+            if (args?.onCacheError) {
+              args.onCacheError(error);
+            } else {
+              return Promise.reject(error);
+            }
+          });
+
           return result;
         } else if (refreshThresholdConfig) {
           const cacheTTL = typeof ttl === 'function' ? ttl(value) : ttl;
